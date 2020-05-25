@@ -111,6 +111,11 @@ Useful for special buffers (e.g. REPL, doc buffers) that have to keep track
 of a namespace.  This should never be set in Clojure buffers, as there the
 namespace should be extracted from the buffer's ns form.")
 
+(defun cider--find-ns ()
+  "Finds the current ns if the current runtime is clojure."
+  (when (cider--runtime-is-clojure-p)
+    (clojure-find-ns)))
+
 (defun cider-current-ns (&optional no-default)
   "Return the current ns.
 The ns is extracted from the ns form for Clojure buffers and from
@@ -446,9 +451,11 @@ Used only when the info nREPL middleware is not available."
 When multiple matching vars are returned you'll be prompted to select one,
 unless ALL is truthy."
   (when (and var (not (string= var "")))
-    (let ((var-info (if (cider-nrepl-op-supported-p "info")
-                        (cider-sync-request:info var)
-                      (cider-fallback-eval:info var))))
+    (let ((var-info (cond ((cider-nrepl-op-supported-p "info")
+                           (cider-sync-request:info var))
+                          ((cider--runtime-is-clojure-p)
+                           (cider-fallback-eval:info var))
+                          (t nil))))
       (if all var-info (cider--var-choice var-info)))))
 
 (defun cider-member-info (class member)
@@ -536,9 +543,11 @@ resolve those to absolute paths."
 
 (defun cider-classpath-entries ()
   "Return a list of classpath entries."
-  (if (cider-nrepl-op-supported-p "classpath")
-      (cider-sync-request:classpath)
-    (cider-fallback-eval:classpath)))
+  (cond ((cider-nrepl-op-supported-p "classpath")
+         (cider-sync-request:classpath))
+        ((cider--runtime-is-clojure-p)
+         (cider-fallback-eval:classpath))
+        (t '())))
 
 (defun cider-sync-request:completion (prefix)
   "Return a list of completions for PREFIX using nREPL's \"completion\" op."
@@ -606,6 +615,7 @@ CONTEXT represents a completion context for compliment."
   "Get a list of the available specs in the registry.
 Optional argument FILTER-REGEX filters specs.  By default, all specs are
 returned."
+  (cider-ensure-op-supported "spec-list")
   (setq filter-regex (or filter-regex ""))
   (thread-first `("op" "spec-list"
                   "filter-regex" ,filter-regex
@@ -615,6 +625,7 @@ returned."
 
 (defun cider-sync-request:spec-form (spec)
   "Get SPEC's form from registry."
+  (cider-ensure-op-supported "spec-form")
   (thread-first `("op" "spec-form"
                   "spec-name" ,spec
                   "ns" ,(cider-current-ns))
@@ -623,6 +634,7 @@ returned."
 
 (defun cider-sync-request:spec-example (spec)
   "Get an example for SPEC."
+  (cider-ensure-op-supported "spec-example")
   (thread-first `("op" "spec-example"
                   "spec-name" ,spec)
     (cider-nrepl-send-sync-request)
@@ -630,6 +642,7 @@ returned."
 
 (defun cider-sync-request:ns-list ()
   "Get a list of the available namespaces."
+  (cider-ensure-op-supported "ns-list")
   (thread-first `("op" "ns-list"
                   "exclude-regexps" ,cider-filtered-namespaces-regexps)
     (cider-nrepl-send-sync-request)
@@ -637,6 +650,7 @@ returned."
 
 (defun cider-sync-request:ns-vars (ns)
   "Get a list of the vars in NS."
+  (cider-ensure-op-supported "ns-vars")
   (thread-first `("op" "ns-vars"
                   "ns" ,ns)
     (cider-nrepl-send-sync-request)
@@ -644,6 +658,7 @@ returned."
 
 (defun cider-sync-request:ns-path (ns)
   "Get the path to the file containing NS."
+  (cider-ensure-op-supported "ns-path")
   (thread-first `("op" "ns-path"
                   "ns" ,ns)
     (cider-nrepl-send-sync-request)
@@ -651,6 +666,7 @@ returned."
 
 (defun cider-sync-request:ns-vars-with-meta (ns)
   "Get a map of the vars in NS to its metadata information."
+  (cider-ensure-op-supported "ns-vars-with-meta")
   (thread-first `("op" "ns-vars-with-meta"
                   "ns" ,ns)
     (cider-nrepl-send-sync-request)
@@ -658,12 +674,14 @@ returned."
 
 (defun cider-sync-request:ns-load-all ()
   "Load all project namespaces."
+  (cider-ensure-op-supported "ns-load-all")
   (thread-first '("op" "ns-load-all")
     (cider-nrepl-send-sync-request)
     (nrepl-dict-get "loaded-ns")))
 
 (defun cider-sync-request:resource (name)
   "Perform nREPL \"resource\" op with resource name NAME."
+  (cider-ensure-op-supported "resource")
   (thread-first `("op" "resource"
                   "name" ,name)
     (cider-nrepl-send-sync-request)
@@ -672,6 +690,7 @@ returned."
 (defun cider-sync-request:resources-list ()
   "Return a list of all resources on the classpath.
 The result entries are relative to the classpath."
+  (cider-ensure-op-supported "resources-list")
   (when-let* ((resources (thread-first '("op" "resources-list")
                            (cider-nrepl-send-sync-request)
                            (nrepl-dict-get "resources-list"))))
@@ -697,6 +716,7 @@ The result entries are relative to the classpath."
 
 (defun cider-sync-request:format-code (code)
   "Perform nREPL \"format-code\" op with CODE."
+  (cider-ensure-op-supported "format-code")
   (thread-first `("op" "format-code"
                   "code" ,code)
     (cider-nrepl-send-sync-request)
@@ -704,6 +724,7 @@ The result entries are relative to the classpath."
 
 (defun cider-sync-request:format-edn (edn right-margin)
   "Perform \"format-edn\" op with EDN and RIGHT-MARGIN."
+  (cider-ensure-op-supported "format-edn")
   (let* ((request (thread-last
                       (map-merge 'list
                                  `(("op" "format-edn")

@@ -91,6 +91,7 @@ opposite of what that option dictates."
 (defun cider-clojuredocs-refresh-cache ()
   "Refresh the ClojureDocs cache."
   (interactive)
+  (cider-ensure-op-supported "clojuredocs-refresh-cache")
   (let ((result (cider-sync-request:clojuredocs-refresh)))
     (if (member "ok" result)
         (message "ClojureDocs cache refreshed successfully")
@@ -150,6 +151,7 @@ opposite of what that option dictates."
   (interactive "P")
   (when (derived-mode-p 'clojurescript-mode)
     (user-error "`cider-clojuredocs' doesn't support ClojureScript"))
+  (cider-ensure-op-supported "clojuredocs-lookup")
   (funcall (cider-prompt-for-symbol-function arg)
            "ClojureDocs doc for"
            #'cider-clojuredocs-lookup))

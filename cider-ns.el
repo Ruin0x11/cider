@@ -199,9 +199,15 @@ of differences.  From the Clojure doc: \":reload forces loading of all the
 identified libs even if they are already loaded\"."
   (interactive "P")
   (let ((ns (if prompt
-                (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (clojure-find-ns)))
-              (clojure-find-ns))))
-    (cider-interactive-eval (format "(require '%s :reload)" ns))))
+                (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (cider--find-ns)))
+              (cider--find-ns))))
+    (cond ((cider-nrepl-op-supported-p "reload")
+           (cider-nrepl-send-sync-request (list "op" "reload" "ns" ns)))
+
+          ((cider--runtime-is-clojure-p)
+           (cider-interactive-eval (format "(require '%s :reload)" ns)))
+
+          (t (message "Runtime '%s' does not support reloading." (cider--nrepl-runtime))))))
 
 ;;;###autoload
 (defun cider-ns-reload-all (&optional prompt)
@@ -215,9 +221,15 @@ also forces loading of all libs that the identified libs directly or
 indirectly load via require\"."
   (interactive "P")
   (let ((ns (if prompt
-                (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (clojure-find-ns)))
-              (clojure-find-ns))))
-    (cider-interactive-eval (format "(require '%s :reload-all)" ns))))
+                (string-remove-prefix "'" (read-from-minibuffer "Namespace: " (cider--find-ns)))
+              (cider--find-ns))))
+    (cond ((cider-nrepl-op-supported-p "reload")
+           (cider-nrepl-send-sync-request (list "op" "reload-all" "ns" ns))
+
+           ((cider--runtime-is-clojure-p)
+            (cider-interactive-eval (format "(require '%s :reload-all)" ns)))
+
+           (t (message "Runtime '%s' does not support reloading all." (cider--nrepl-runtime)))))))
 
 ;;;###autoload
 (defun cider-ns-refresh (&optional mode)

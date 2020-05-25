@@ -265,9 +265,10 @@ Uses the value of the `out' slot in RESPONSE."
 
 (defun cider-default-err-eval-handler ()
   "Display the last exception without middleware support."
-  (cider--handle-err-eval-response
-   (cider-nrepl-sync-request:eval
-    "(clojure.stacktrace/print-cause-trace *e)")))
+  (when (cider--runtime-is-clojure-p)
+    (cider--handle-err-eval-response
+     (cider-nrepl-sync-request:eval
+      "(clojure.stacktrace/print-cause-trace *e)"))))
 
 (defun cider--render-stacktrace-causes (causes &optional error-types)
   "If CAUSES is non-nil, render its contents into a new error buffer.
@@ -663,18 +664,19 @@ ns declaration itself.  Clear any compilation highlights and kill the error
 window."
   (cider--clear-compilation-highlights)
   (cider--quit-error-window)
-  (let ((cur-ns-form (cider-ns-form)))
-    (when (and cur-ns-form
-               (not (cider-ns-form-p form))
-               (cider-repl--ns-form-changed-p cur-ns-form connection))
-      (when cider-auto-track-ns-form-changes
-        ;; The first interactive eval on a file can load a lot of libs. This can
-        ;; easily lead to more than 10 sec.
-        (let ((nrepl-sync-request-timeout 30))
-          ;; TODO: check for evaluation errors
-          (cider-nrepl-sync-request:eval cur-ns-form connection)))
-      ;; cache at the end, in case of errors
-      (cider-repl--cache-ns-form cur-ns-form connection))))
+  (when (cider--runtime-is-clojure-p)
+    (let ((cur-ns-form (cider-ns-form)))
+      (when (and cur-ns-form
+                 (not (cider-ns-form-p form))
+                 (cider-repl--ns-form-changed-p cur-ns-form connection))
+        (when cider-auto-track-ns-form-changes
+          ;; The first interactive eval on a file can load a lot of libs. This can
+          ;; easily lead to more than 10 sec.
+          (let ((nrepl-sync-request-timeout 30))
+            ;; TODO: check for evaluation errors
+            (cider-nrepl-sync-request:eval cur-ns-form connection)))
+        ;; cache at the end, in case of errors
+        (cider-repl--cache-ns-form cur-ns-form connection)))))
 
 (defvar-local cider-interactive-eval-override nil
   "Function to call instead of `cider-interactive-eval'.")
@@ -709,7 +711,7 @@ arguments and only proceed with evaluation if it returns nil."
            (or callback (cider-interactive-eval-handler nil bounds))
            ;; always eval ns forms in the user namespace
            ;; otherwise trying to eval ns form for the first time will produce an error
-           (if (cider-ns-form-p form) "user" (cider-current-ns))
+           (if (or (not (cider--runtime-is-clojure-p)) (cider-ns-form-p form)) "user" (cider-current-ns))
            (when start (line-number-at-pos start))
            (when start (cider-column-number-at-pos start))
            (seq-mapcat #'identity additional-params)
@@ -728,6 +730,7 @@ arguments and only proceed with evaluation if it returns nil."
 If invoked with OUTPUT-TO-CURRENT-BUFFER, print the result in the current
 buffer."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (cider-interactive-eval nil
                           (when output-to-current-buffer (cider-eval-print-handler))
                           (cider-last-sexp 'bounds)
@@ -736,6 +739,7 @@ buffer."
 (defun cider-eval-last-sexp-and-replace ()
   "Evaluate the expression preceding point and replace it with its result."
   (interactive)
+  (cider--ensure-runtime-is-clojure-p)
   (let ((last-sexp (cider-last-sexp)))
     ;; we have to be sure the evaluation won't result in an error
     (cider-nrepl-sync-request:eval last-sexp)
@@ -750,6 +754,7 @@ buffer."
   "Evaluate the expression around point.
 If invoked with OUTPUT-TO-CURRENT-BUFFER, output the result to current buffer."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (save-excursion
     (goto-char (cadr (cider-sexp-at-point 'bounds)))
     (cider-eval-last-sexp output-to-current-buffer)))
@@ -776,6 +781,7 @@ That's set by commands like `cider-eval-last-sexp-in-context'.")
 The context is just a let binding vector (without the brackets).
 The context is remembered between command invocations."
   (interactive)
+  (cider--ensure-runtime-is-clojure-p)
   (cider--eval-in-context (cider-last-sexp)))
 
 (defun cider-eval-sexp-at-point-in-context ()
@@ -784,6 +790,7 @@ The context is remembered between command invocations."
 The context is just a let binding vector (without the brackets).
 The context is remembered between command invocations."
   (interactive)
+  (cider--ensure-runtime-is-clojure-p)
   (cider--eval-in-context (cider-sexp-at-point)))
 
 (defun cider-eval-defun-to-comment (&optional insert-before)
@@ -794,6 +801,7 @@ which, by default, is \";; => \" and can be customized.
 
 With the prefix arg INSERT-BEFORE, insert before the form, otherwise afterwards."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (let* ((bounds (cider-defun-at-point 'bounds))
          (insertion-point (nth (if insert-before 0 1) bounds)))
     (cider-interactive-eval nil
@@ -818,6 +826,7 @@ in the reader macro \"#_( .. )\", or \"(comment ... )\", or any
 other desired formatting.
 
 If INSERT-BEFORE is non-nil, insert before the form, otherwise afterwards."
+  (cider--ensure-runtime-is-clojure-p)
   (let* ((bounds (funcall form-fn 'bounds))
          (insertion-point (nth (if insert-before 0 1) bounds))
          ;; when insert-before, we need a newline after the output to
@@ -848,6 +857,7 @@ other desired formatting.
 
 If INSERT-BEFORE is non-nil, insert before the form, otherwise afterwards."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (cider-pprint-form-to-comment 'cider-last-sexp insert-before))
 
 (defun cider-pprint-eval-defun-to-comment (&optional insert-before)
@@ -864,6 +874,7 @@ other desired formatting.
 
 If INSERT-BEFORE is non-nil, insert before the form, otherwise afterwards."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (cider-pprint-form-to-comment 'cider-defun-at-point insert-before))
 
 (declare-function cider-switch-to-repl-buffer "cider-mode")
@@ -872,6 +883,7 @@ If INSERT-BEFORE is non-nil, insert before the form, otherwise afterwards."
   "Evaluate the expression preceding point and insert its result in the REPL.
 If invoked with a PREFIX argument, switch to the REPL buffer."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (cider-interactive-eval nil
                           (cider-insert-eval-handler (cider-current-repl))
                           (cider-last-sexp 'bounds)
@@ -883,6 +895,7 @@ If invoked with a PREFIX argument, switch to the REPL buffer."
   "Evaluate expr before point and insert its pretty-printed result in the REPL.
 If invoked with a PREFIX argument, switch to the REPL buffer."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (cider-interactive-eval nil
                           (cider-insert-eval-handler (cider-current-repl))
                           (cider-last-sexp 'bounds)
@@ -895,6 +908,7 @@ If invoked with a PREFIX argument, switch to the REPL buffer."
 Print its value into the current buffer.
 With an optional PRETTY-PRINT prefix it pretty-prints the result."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (cider-interactive-eval nil
                           (cider-eval-print-handler)
                           (cider-last-sexp 'bounds)
@@ -918,12 +932,14 @@ With an optional PRETTY-PRINT prefix it pretty-prints the result."
 If invoked with OUTPUT-TO-CURRENT-BUFFER, insert as comment in the current
 buffer, else display in a popup buffer."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (if output-to-current-buffer
       (cider-pprint-eval-last-sexp-to-comment)
     (cider--pprint-eval-form (cider-last-sexp 'bounds))))
 
 (defun cider--prompt-and-insert-inline-dbg ()
   "Insert a #dbg button at the current sexp."
+  (cider--ensure-runtime-is-clojure-p)
   (save-excursion
     (let ((beg))
       (skip-chars-forward "\r\n[:blank:]")
@@ -951,6 +967,7 @@ buffer, else display in a popup buffer."
 With DEBUG-IT prefix argument, also debug the entire form as with the
 command `cider-debug-defun-at-point'."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (let ((inline-debug (eq 16 (car-safe debug-it))))
     (when debug-it
       (when (derived-mode-p 'clojurescript-mode)
@@ -1004,6 +1021,7 @@ buffer.  It constructs an expression to eval in the following manner:
 - It balances this bit of code by closing all open expressions;
 - It evaluates the resulting code using `cider-interactive-eval'."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (let* ((beg-of-defun (save-excursion (beginning-of-defun) (point)))
          (code (buffer-substring-no-properties beg-of-defun (point)))
          (code (concat code (cider--calculate-closing-delimiters))))
@@ -1022,6 +1040,7 @@ buffer.  It constructs an expression to eval in the following manner:
 - It balances this bit of code by closing the expression;
 - It evaluates the resulting code using `cider-interactive-eval'."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (let* ((beg-of-sexp (save-excursion (up-list) (backward-list) (point)))
          (beg-delimiter (save-excursion (up-list) (backward-list) (char-after)))
          (beg-set?  (save-excursion (up-list) (backward-list) (char-before)))
@@ -1039,6 +1058,7 @@ buffer.  It constructs an expression to eval in the following manner:
 If invoked with OUTPUT-TO-CURRENT-BUFFER, insert as comment in the current
 buffer, else display in a popup buffer."
   (interactive "P")
+  (cider--ensure-runtime-is-clojure-p)
   (if output-to-current-buffer
       (cider-pprint-eval-defun-to-comment)
     (cider--pprint-eval-form (cider-defun-at-point 'bounds))))
@@ -1046,6 +1066,7 @@ buffer, else display in a popup buffer."
 (defun cider-eval-ns-form ()
   "Evaluate the current buffer's namespace form."
   (interactive)
+  (cider--ensure-runtime-is-clojure-p)
   (when (clojure-find-ns)
     (save-excursion
       (goto-char (match-beginning 0))
@@ -1055,12 +1076,15 @@ buffer, else display in a popup buffer."
   "Read a sexp from the minibuffer and output its result to the echo area.
 If VALUE is non-nil, it is inserted into the minibuffer as initial input."
   (interactive)
-  (let* ((form (cider-read-from-minibuffer "Clojure Eval: " value))
+  (let* ((form (cider-read-from-minibuffer "CIDER Eval: " value))
+         (mode major-mode)
          (override cider-interactive-eval-override)
          (ns-form (if (cider-ns-form-p form) "" (format "(ns %s)" (cider-current-ns)))))
     (with-current-buffer (get-buffer-create cider-read-eval-buffer)
       (erase-buffer)
-      (clojure-mode)
+      ;; Copy the major-mode to the eval buffer, so the proper runtime can be
+      ;; detected.
+      (funcall mode)
       (unless (string= "" ns-form)
         (insert ns-form "\n\n"))
       (insert form)
@@ -1075,6 +1099,7 @@ If VALUE is non-nil, it is inserted into the minibuffer as initial input."
 The point is placed next to the function name in the minibuffer to allow
 passing arguments."
   (interactive)
+  (cider--ensure-runtime-is-clojure-p)
   (let* ((fn-name (cadr (split-string (cider-defun-at-point))))
          (form (format "(%s)" fn-name)))
     (cider-read-and-eval (cons form (length form)))))
@@ -1176,7 +1201,7 @@ Optional argument CALLBACK will override the default â€˜cider-load-file-handlerâ
           (message "Loading %s..." filename))))))
 
 (defun cider-load-file (filename)
-  "Load (eval) the Clojure file FILENAME in nREPL.
+  "Load (eval) the file FILENAME in nREPL.
 If the file is a cljc file, and both a Clojure and ClojureScript REPL
 exists for the project, it is evaluated in both REPLs.  The heavy lifting
 is done by `cider-load-buffer'."

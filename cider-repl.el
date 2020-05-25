@@ -168,16 +168,17 @@ you'd like to use the default Emacs behavior use
 (make-obsolete-variable 'cider-repl-print-length 'cider-print-options "0.21")
 (make-obsolete-variable 'cider-repl-print-level 'cider-print-options "0.21")
 
-(defvar cider-repl-require-repl-utils-code
-  '((clj . "(clojure.core/apply clojure.core/require clojure.main/repl-requires)")
-    (cljs . "(require '[cljs.repl :refer [apropos dir doc find-doc print-doc pst source]])")))
-
-(defcustom cider-repl-init-code (list (cdr (assoc 'clj cider-repl-require-repl-utils-code)))
+(defcustom cider-repl-require-repl-utils-code
+  '((clj . ("(clojure.core/apply clojure.core/require clojure.main/repl-requires)"))
+    (cljs . ("(require '[cljs.repl :refer [apropos dir doc find-doc print-doc pst source]])")))
   "Clojure code to evaluate when starting a REPL.
+Each key is a runtime type, and each value a list of code to eval.
 Will be evaluated with bindings for set!-able vars in place."
-  :type '(list string)
+  :type '(alist :key-type symbol :value-type list)
   :group 'cider-repl
-  :package-version '(cider . "0.21.0"))
+  :package-version '(cider . "0.26.0" ))
+
+(make-obsolete-variable 'cider-repl-init-code 'cider-repl-require-repl-utils-code "0.26")
 
 (defcustom cider-repl-display-help-banner t
   "When non-nil a bit of help text will be displayed on REPL start."
@@ -260,11 +261,13 @@ This cache is stored in the connection buffer.")
   (interactive)
   (let* ((current-repl (cider-current-repl nil 'ensure))
          (require-code (cdr (assoc (cider-repl-type current-repl) cider-repl-require-repl-utils-code))))
-    (nrepl-send-sync-request
-     (lax-plist-put
-      (nrepl--eval-request require-code (cider-current-ns))
-      "inhibit-cider-middleware" "true")
-     current-repl)))
+    (if require-code
+        (nrepl-send-sync-request
+         (lax-plist-put
+          (nrepl--eval-request (string-join require-code "\n") (cider-current-ns))
+          "inhibit-cider-middleware" "true")
+         current-repl))
+    (message "No repl utils for runtime '%s'" (cider-repl-type current-repl))))
 
 (defun cider-repl-init-eval-handler (&optional callback)
   "Make an nREPL evaluation handler for use during REPL init.
@@ -286,10 +289,12 @@ Run CALLBACK once the evaluation is complete."
   (interactive)
   (let* ((request (map-merge 'hash-table
                              (cider--repl-request-map fill-column)
-                             '(("inhibit-cider-middleware" "true")))))
+                             '(("inhibit-cider-middleware" "true"))))
+         (current-repl (cider-current-repl nil 'ensure))
+         (require-code (cdr (assoc (cider-repl-type current-repl) cider-repl-require-repl-utils-code))))
     (cider-nrepl-request:eval
      ;; Ensure we evaluate _something_ so the initial namespace is correctly set
-     (thread-first (or cider-repl-init-code '("nil"))
+     (thread-first (or require-code '("nil"))
        (string-join "\n"))
      (cider-repl-init-eval-handler callback)
      nil
@@ -364,20 +369,30 @@ present."
   "Generate the welcome REPL buffer banner."
   (format ";; Connected to nREPL server - nrepl://%s:%s
 ;; CIDER %s, nREPL %s
-;; Clojure %s, Java %s
-;;     Docs: (doc function-name)
-;;           (find-doc part-of-name)
-;;   Source: (source function-name)
-;;  Javadoc: (javadoc java-object-or-class)
-;;     Exit: <C-c C-q>
-;;  Results: Stored in vars *1, *2, *3, an exception in *e;
-"
+;; Runtime: %s, %s
+%s;;     Exit: <C-c C-q>
+%s"
           (plist-get nrepl-endpoint :host)
           (plist-get nrepl-endpoint :port)
           (cider--version)
           (cider--nrepl-version)
-          (cider--clojure-version)
-          (cider--java-version)))
+          (cider--nrepl-active-runtime)
+          (if (cider--runtime-is-clojure-p)
+              (format "Clojure %s, Java %s"
+                      (cider--clojure-version)
+                      (cider--java-version))
+            (format "Version: %s"
+                    (cider--nrepl-runtime-version)))
+          (if (cider--runtime-is-clojure-p)
+";;     Docs: (doc function-name)
+;;           (find-doc part-of-name)
+;;   Source: (source function-name)
+;;  Javadoc: (javadoc java-object-or-class)\n"
+"")
+          (if (cider--runtime-is-clojure-p)
+              ";;  Results: Stored in vars *1, *2, *3, an exception in *e;\n"
+            "")))
+
 
 (defun cider-repl--help-banner ()
   "Generate the help banner."

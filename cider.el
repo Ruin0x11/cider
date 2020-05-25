@@ -1137,6 +1137,22 @@ non-nil, don't start if ClojureScript requirements are not met."
           (cider-connect-sibling-cljs params clj-repl))
       (cider-connect-sibling-cljs params clj-repl))))
 
+;;;###autoload
+(defun cider-connect-generic (&optional params)
+  "Initialize a generic connection to an nREPL server.
+The connection type is inferred by the runtime returned by the nREPL
+server.  PARAMS is a plist optionally containing :host, :port and
+:project-dir.  On prefix argument, prompt for all the parameters."
+  (interactive "P")
+  (cider-nrepl-connect
+   (thread-first params
+     (cider--update-project-dir)
+     (cider--update-host-port)
+     (cider--check-existing-session)
+     (plist-put :repl-init-function nil)
+     (plist-put :session-name nil)
+     (plist-put :repl-type 'unknown))))
+
 (defvar cider-connection-init-commands
   '(cider-jack-in-clj
     cider-jack-in-cljs
@@ -1144,6 +1160,7 @@ non-nil, don't start if ClojureScript requirements are not met."
     cider-connect-clj
     cider-connect-cljs
     cider-connect-clj&cljs
+    cider-connect-generic
     cider-connect-sibling-clj
     cider-connect-sibling-cljs)
   "A list of all user-level connection init commands in CIDER.")
@@ -1454,7 +1471,7 @@ of list of the form (project-dir port)."
          (proj-ports (mapcar (lambda (d)
                                (when-let* ((port (and d (nrepl-extract-port (cider--file-path d)))))
                                  (list (file-name-nondirectory (directory-file-name d)) port)))
-                             (cons (clojure-project-dir dir) paths))))
+                             (cons (or (clojure-project-dir dir) dir) paths))))
     (seq-uniq (delq nil proj-ports))))
 
 (defun cider--running-nrepl-paths ()

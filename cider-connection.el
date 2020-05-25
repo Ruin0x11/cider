@@ -69,6 +69,21 @@ available) and the matching REPL buffer."
 (defconst cider-required-nrepl-version "0.6.0"
   "The minimum nREPL version that's known to work properly with CIDER.")
 
+(defcustom cider-repl-types-for-buffer
+  '((clojurescript-mode . cljs)
+    (clojurec-mode . multi)
+    (clojure-mode . clj)
+    (lua-mode . jeejah))
+  "Alist of buffer major modes to the nREPL runtime to use for them.
+When using functions like cider-eval-buffer, the evaluation will
+only be applied to active REPLs with a runtime matching the
+current buffer's major mode. current buffer.
+
+'multi is a special runtime, meaning either clj or cljs."
+  :type '(alist :key-type symbol :value-type symbol)
+  :group 'cider
+  :package-version '(cider . "0.25.0"))
+
 
 ;;; Connect
 
@@ -283,6 +298,9 @@ See command `cider-mode'."
   "Handle CIDER initialization after nREPL connection has been established.
 This function is appended to `nrepl-connected-hook' in the client process
 buffer."
+  (when (eq cider-repl-type 'unknown)
+    (when-let (runtime (cider--nrepl-runtime))
+      (setq cider-repl-type (make-symbol runtime))))
   ;; `nrepl-connected-hook' is run in the connection buffer
   ;; `cider-enlighten-mode' changes eval to include the debugger, so we inhibit
   ;; it here as the debugger isn't necessarily initialized yet
@@ -293,8 +311,9 @@ buffer."
      (current-buffer)
      (lambda ()
        (cider--check-required-nrepl-version)
-       (cider--check-clojure-version-supported)
-       (cider--check-middleware-compatibility)
+       (when (cider--runtime-is-clojure-p)
+         (cider--check-clojure-version-supported)
+         (cider--check-middleware-compatibility))
        ;; Redirect the nREPL's terminal output to a REPL buffer.
        ;; If we don't do this the server's output will end up
        ;; in the *nrepl-server* buffer.
@@ -308,7 +327,8 @@ buffer."
        ;; (likely a Clojure bug). Thus, we load the heavy debug middleware towards
        ;; the end, allowing for the faster "server-out" middleware to load
        ;; first.
-       (cider--debug-init-connection)
+       (when (cider-nrepl-op-supported-p "init-debugger")
+         (cider--debug-init-connection))
        (when cider-repl-init-function
          (funcall cider-repl-init-function))
        (run-hooks 'cider-connected-hook)))))
@@ -348,20 +368,58 @@ process buffer."
         (nrepl-dict-get "nrepl")
         (nrepl-dict-get "version-string")))))
 
+(defun cider--nrepl-runtime ()
+  "Retrieve the underlying connection's runtime."
+  (with-current-buffer (cider-current-repl)
+    (when-let* (nrepl-versions
+                (runtime (nrepl-dict-get nrepl-versions "runtime")))
+      (nrepl-dict-get runtime "name"))))
+
+(defun cider--nrepl-runtime-version ()
+  "Retrieve the underlying connection's runtime version."
+  (with-current-buffer (cider-current-repl)
+    (when-let* (nrepl-versions
+                (runtime (nrepl-dict-get nrepl-versions "runtime")))
+      (nrepl-dict-get runtime "version-string"))))
+
+(defun cider--nrepl-active-runtime ()
+  "Retrieve the underlying connection's runtime, or 'clj' if unsupported."
+  (or (cider--nrepl-runtime) "clj"))
+
+(defun cider--runtime-is-clojure-p ()
+  "True if the nREPL reports the runtime as Clojure."
+  (if (cider-current-repl)
+      (let ((runtime (cider--nrepl-active-runtime)))
+        (or
+         (equal runtime "clj")
+         (equal runtime "cljs")))
+    t))
+
+(defun cider--ensure-runtime-is-clojure-p ()
+  "True if the nREPL reports the runtime as Clojure."
+  (unless (cider--runtime-is-clojure-p)
+    (user-error "The command '%s' is only available when using CIDER with Clojure" this-command)))
+
 (defun cider--connection-info (connection-buffer &optional genericp)
   "Return info about CONNECTION-BUFFER.
 Info contains project name, current REPL namespace, host:port endpoint and
 Clojure version.  When GENERICP is non-nil, don't provide specific info
 about this buffer (like variable `cider-repl-type')."
   (with-current-buffer connection-buffer
-    (format "%s%s@%s:%s (Java %s, Clojure %s, nREPL %s)"
+    (format "%s%s@%s:%s %s %s"
             (if genericp "" (upcase (concat (symbol-name cider-repl-type) " ")))
             (or (cider--project-name nrepl-project-dir) "<no project>")
             (plist-get nrepl-endpoint :host)
             (plist-get nrepl-endpoint :port)
-            (cider--java-version)
-            (cider--clojure-version)
-            (cider--nrepl-version))))
+            (cider--nrepl-active-runtime)
+            (if (cider--runtime-is-clojure-p)
+                (format "(Java %s, Clojure %s, nREPL %s)"
+                        (cider--java-version)
+                        (cider--clojure-version)
+                        (cider--nrepl-version))
+              (format "(Version %s, nREPL %s)"
+                      (cider--nrepl-runtime-version)
+                      (cider--nrepl-version))))))
 
 
 ;;; Cider's Connection Management UI
@@ -430,11 +488,13 @@ REPL defaults to the current REPL."
              (session-type (cond
                             ((equal session-id (cider-nrepl-eval-session)) "Active eval")
                             ((equal session-id (cider-nrepl-tooling-session)) "Active tooling")
-                            (t "Unknown"))))
+                            (t "Unknown")))
+             (runtime (if-let ((runtime (cider--nrepl-runtime))) runtime (format "%s (inferred)" (cider--nrepl-active-runtime)))))
         (with-current-buffer (cider-popup-buffer cider-nrepl-session-buffer 'select nil 'ancillary)
           (read-only-mode -1)
           (insert (format "Session: %s\n" session-id)
                   (format "Type: %s session\n" session-type)
+                  (format "Runtime: %s\n" runtime)
                   (format "Supported ops:\n"))
           (mapc (lambda (op) (insert (format "  * %s\n" op))) ops)))
       (display-buffer cider-nrepl-session-buffer))))
@@ -635,10 +695,10 @@ BUFFER defaults to the `current-buffer'.  In cljc buffers return
 multi.  This function infers connection type based on the major mode.
 For the REPL type use the function `cider-repl-type'."
   (with-current-buffer (or buffer (current-buffer))
-    (cond
-     ((derived-mode-p 'clojurescript-mode) 'cljs)
-     ((derived-mode-p 'clojurec-mode) 'multi)
-     ((derived-mode-p 'clojure-mode) 'clj)
+    (or
+     (loop for (mode . runtime) in cider-repl-types-for-buffer
+           until (derived-mode-p mode)
+           finally return runtime)
      (cider-repl-type))))
 
 (defun cider-set-repl-type (&optional type)
@@ -756,7 +816,7 @@ function with the repl buffer set as current."
 
 (defun cider-current-repl (&optional type ensure)
   "Get the most recent REPL of TYPE from the current session.
-TYPE is either clj, cljs, multi or any.
+TYPE is either a runtime like clj or cljs, multi or any.
 When nil, infer the type from the current buffer.
 If ENSURE is non-nil, throw an error if either there is
 no linked session or there is no REPL of TYPE within the current session."

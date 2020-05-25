@@ -146,6 +146,7 @@ by clicking or navigating to them by other means."
 With a prefix argument ARG it inspects the result of the \"top-level\" form.
 With a second prefix argument it prompts for an expression to eval and inspect."
   (interactive "p")
+  (cider--ensure-runtime-is-clojure-p)
   (pcase arg
     (1 (cider-inspect-last-sexp))
     (4 (cider-inspect-defun-at-point))

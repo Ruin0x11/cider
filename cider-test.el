@@ -277,6 +277,7 @@ prompt and whether to use a new window.  Similar to `cider-find-var'."
 
 (defun cider-test-stacktrace-for (ns var index)
   "Display stacktrace for the erring NS VAR test with the assertion INDEX."
+  (cider-ensure-op-supported "test-stacktrace")
   (let (causes)
     (cider-nrepl-send-request
      (thread-last
@@ -640,7 +641,11 @@ If PROMPT-FOR-FILTERS is non-nil, prompt the user for a test selector filters.
 The include/exclude selectors will be used to filter the tests before
  running them."
   (cider-test-clear-highlights)
-  (let ((include-selectors
+  (let ((op (cond ((stringp ns)         "test")
+                  ((eq :project ns)     "test-all")
+                  ((eq :loaded ns)      "test-all")
+                  ((eq :non-passing ns) "retest")))
+        (include-selectors
          (when prompt-for-filters
            (cider-test--prompt-for-selectors "Test selectors to include (space separated): ")))
         (exclude-selectors
@@ -648,57 +653,55 @@ The include/exclude selectors will be used to filter the tests before
            (cider-test--prompt-for-selectors "Test selectors to exclude (space separated): "))))
     (cider-map-repls :clj-strict
       (lambda (conn)
-        (unless silent
-          (if (and tests (= (length tests) 1))
-              ;; we generate a different message when running individual tests
-              (cider-test-echo-running ns (car tests))
-            (cider-test-echo-running ns)))
-        (let ((request `("op" ,(cond ((stringp ns)         "test")
-                                     ((eq :project ns)     "test-all")
-                                     ((eq :loaded ns)      "test-all")
-                                     ((eq :non-passing ns) "retest")))))
-          ;; we add optional parts of the request only when relevant
-          (when (and (listp include-selectors) include-selectors)
-            (setq request (append request `("include" ,include-selectors))))
-          (when (and (listp exclude-selectors) exclude-selectors)
-            (setq request (append request `("exclude" ,exclude-selectors))))
-          (when (stringp ns)
-            (setq request (append request `("ns" ,ns))))
-          (when (stringp ns)
-            (setq request (append request `("tests" ,tests))))
-          (when (or (stringp ns) (eq :project ns))
-            (setq request (append request `("load?" ,"true"))))
-          (cider-nrepl-send-request
-           request
-           (lambda (response)
-             (nrepl-dbind-response response (summary results status out err)
-               (cond ((member "namespace-not-found" status)
-                      (unless silent
-                        (message "No test namespace: %s" (cider-propertize ns 'ns))))
-                     (out (cider-emit-interactive-eval-output out))
-                     (err (cider-emit-interactive-eval-err-output err))
-                     (results
-                      (nrepl-dbind-response summary (error fail)
-                        (setq cider-test-last-summary summary)
-                        (setq cider-test-last-results results)
-                        (cider-test-highlight-problems results)
-                        (cider-test-echo-summary summary results)
-                        (if (or (not (zerop (+ error fail)))
-                                cider-test-show-report-on-success)
-                            (cider-test-render-report
-                             (cider-popup-buffer
-                              cider-test-report-buffer
-                              cider-auto-select-test-report-buffer)
-                             summary
-                             results)
-                          (when (get-buffer cider-test-report-buffer)
-                            (with-current-buffer cider-test-report-buffer
-                              (let ((inhibit-read-only t))
-                                (erase-buffer)))
-                            (cider-test-render-report
-                             cider-test-report-buffer
-                             summary results))))))))
-           conn))))))
+        (when (cider-nrepl-op-supported-p op conn)
+          (unless silent
+            (if (and tests (= (length tests) 1))
+                ;; we generate a different message when running individual tests
+                (cider-test-echo-running ns (car tests))
+              (cider-test-echo-running ns)))
+          (let ((request `("op" ,op)))
+            ;; we add optional parts of the request only when relevant
+            (when (and (listp include-selectors) include-selectors)
+              (setq request (append request `("include" ,include-selectors))))
+            (when (and (listp exclude-selectors) exclude-selectors)
+              (setq request (append request `("exclude" ,exclude-selectors))))
+            (when (stringp ns)
+              (setq request (append request `("ns" ,ns))))
+            (when (stringp ns)
+              (setq request (append request `("tests" ,tests))))
+            (when (or (stringp ns) (eq :project ns))
+              (setq request (append request `("load?" ,"true"))))
+            (cider-nrepl-send-request
+             request
+             (lambda (response)
+               (nrepl-dbind-response response (summary results status out err)
+                 (cond ((member "namespace-not-found" status)
+                        (unless silent
+                          (message "No test namespace: %s" (cider-propertize ns 'ns))))
+                       (out (cider-emit-interactive-eval-output out))
+                       (err (cider-emit-interactive-eval-err-output err))
+                       (results
+                        (nrepl-dbind-response summary (error fail)
+                          (setq cider-test-last-summary summary)
+                          (setq cider-test-last-results results)
+                          (cider-test-highlight-problems results)
+                          (cider-test-echo-summary summary results)
+                          (if (or (not (zerop (+ error fail)))
+                                  cider-test-show-report-on-success)
+                              (cider-test-render-report
+                               (cider-popup-buffer
+                                cider-test-report-buffer
+                                cider-auto-select-test-report-buffer)
+                               summary
+                               results)
+                            (when (get-buffer cider-test-report-buffer)
+                              (with-current-buffer cider-test-report-buffer
+                                (let ((inhibit-read-only t))
+                                  (erase-buffer)))
+                              (cider-test-render-report
+                               cider-test-report-buffer
+                               summary results))))))))
+             conn)))))))
 
 (defun cider-test-rerun-failed-tests ()
   "Rerun failed and erring tests from the last test run."
